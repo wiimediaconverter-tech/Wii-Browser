@@ -1,0 +1,40 @@
+name: Build NPM Packages
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch: # allows you to trigger manually from GitHub’s Actions tab
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'  # you can change this if you use another version
+
+      - name: Install dependencies
+        run: |
+          npm install
+
+      - name: Run build (optional)
+        run: |
+          if [ -f package.json ] && grep -q "\"build\"" package.json; then
+            npm run build
+          else
+            echo "No build script found, skipping."
+          fi
+
+      - name: Commit built files
+        run: |
+          git config --local user.name "github-actions[bot]"
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git add .
+          git commit -m "Built packages using npm" || echo "No changes to commit"
+          git push
