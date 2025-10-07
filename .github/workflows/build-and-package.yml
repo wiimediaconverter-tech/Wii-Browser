@@ -34,10 +34,10 @@ jobs:
             npm install
           fi
 
-      - name: Determine & run build command (safe)
+      - name: Determine & run build command (safe, uses .cjs helper)
         id: buildstep
         run: |
-          cat > choose_build.js <<'JS'
+          cat > choose_build.cjs <<'CJS'
           const fs = require('fs');
           try {
             const p = JSON.parse(fs.readFileSync('package.json','utf8'));
@@ -50,13 +50,12 @@ jobs:
             if (deps.parcel) { console.log('npx parcel build'); process.exit(0); }
           } catch(e) { /* ignore */ }
           console.log('');
-          JS
+          CJS
 
-          BUILD_CMD="$(node choose_build.js)"
+          BUILD_CMD="$(node choose_build.cjs)"
           echo "Selected build command: [$BUILD_CMD]"
           echo "cmd=$BUILD_CMD" >> $GITHUB_OUTPUT
           if [ -n "$BUILD_CMD" ]; then
-            # run the command(s); allow failure but continue the workflow
             bash -lc "$BUILD_CMD" || echo "Build command failed (nonfatal)";
           else
             echo "No build command detected, skipping build step."
