@@ -37,27 +37,11 @@ jobs:
       - name: Determine & run build command (tries common options)
         id: buildstep
         run: |
-          # Decide which build command to run (if any)
-          BUILD_CMD=""
-          node -e "
-          const fs=require('fs');
-          let p={};
-          try { p=require('./package.json') } catch(e) {}
-          if(p.scripts && p.scripts.build) { console.log('npm run build'); process.exit(0); }
-          const deps = Object.assign({}, p.dependencies || {}, p.devDependencies || {});
-          if(deps.vite) { console.log('npm run build || npx vite build'); process.exit(0); }
-          if(deps['react-scripts']) { console.log('npm run build'); process.exit(0); }
-          if(deps.next) { console.log('npm run build'); process.exit(0); }
-          if(deps.gatsby) { console.log('npm run build'); process.exit(0); }
-          if(deps.parcel) { console.log('npx parcel build'); process.exit(0); }
-          console.log('');
-          "
           BUILD_CMD="$(node -e \"const fs=require('fs'); try{const p=require('./package.json'); if(p.scripts && p.scripts.build){console.log('npm run build');} else { const deps = Object.assign({}, p.dependencies||{}, p.devDependencies||{}); if(deps.vite){console.log('npm run build || npx vite build')} else if(deps['react-scripts']){console.log('npm run build')} else if(deps.next){console.log('npm run build')} else if(deps.gatsby){console.log('npm run build')} else if(deps.parcel){console.log('npx parcel build')} else {console.log('')} }}catch(e){console.log('')}\")"
           echo "Selected build command: [$BUILD_CMD]"
-          echo "::set-output name=cmd::$BUILD_CMD"
+          echo "cmd=$BUILD_CMD" >> $GITHUB_OUTPUT
           if [ -n "$BUILD_CMD" ]; then
-            # attempt the selected command(s); allow failure but continue
-            bash -lc "$BUILD_CMD" || echo "Build command failed (nonfatal)"; 
+            bash -lc "$BUILD_CMD" || echo "Build command failed (nonfatal)";
           else
             echo "No build command detected, skipping build step."
           fi
@@ -74,57 +58,61 @@ jobs:
       - name: Collect build artifact paths
         id: collect
         run: |
-          # create a list of existing candidate directories with content
           ARTPATHS=""
           for d in dist build out public .next .output; do
             if [ -d "$d" ] && [ "$(ls -A $d 2>/dev/null)" ]; then
               ARTPATHS="$ARTPATHS $d"
             fi
           done
-          # also check top-level files sometimes used
-          if [ -f index.html ] && [ ! -d dist ]; then
+          if [ -f index.html ] && [ -z "$ARTPATHS" ]; then
             ARTPATHS="$ARTPATHS index.html"
           fi
-          echo "paths:$ARTPATHS" > artifact_paths.txt
-          echo "::set-output name=paths::$ARTPATHS"
-          cat artifact_paths.txt
-
+          # Trim leading space
+          ARTPATHS="$(echo $ARTPATHS | sed -e 's/^ //')"
+          echo "paths=$ARTPATHS" >> $GITHUB_OUTPUT
+          echo "Found artifact paths: [$ARTPATHS]"
+      
       - name: Upload build output (if any)
-        if: steps.collect.outputs.paths != ''
+        if: ${{ steps.collect.outputs.paths != '' }}
         uses: actions/upload-artifact@v4
         with:
           name: build-output
           path: ${{ steps.collect.outputs.paths }}
 
-      - name: Upload node_modules.zip fallback (if no build output)
-        if: steps.collect.outputs.paths == ''
+      - name: Create node_modules.zip fallback (if no build output)
+        if: ${{ steps.collect.outputs.paths == '' }}
         run: |
           echo "No build output found; creating node_modules.zip as fallback (may be large)."
           rm -f node_modules.zip
           if [ -d node_modules ]; then
-            # create zip, avoid symlinks issues and huge subtrees if desired
             zip -r node_modules.zip node_modules || true
             ls -lh node_modules.zip || true
           else
             echo "No node_modules present."
           fi
-        # upload fallback zip (only if present)
+
       - name: Upload node_modules zip (fallback)
-        if: steps.collect.outputs.paths == '' && always()
+        if: ${{ steps.collect.outputs.paths == '' }}
         uses: actions/upload-artifact@v4
         with:
           name: node_modules-zip
           path: node_modules.zip
 
-      - name: Upload debug files (package.json + filelist)
+      - name: Create debug files (package.json + filelist)
         run: |
-          echo "Uploading debug files..."
           ls -la > filelist.txt
-          echo "---- package.json ----" > packagejson.txt
-          if [ -f package.json ]; then cat package.json >> packagejson.txt; else echo "no package.json" >> packagejson.txt; fi
+          if [ -f package.json ]; then
+            echo "---- package.json ----" > packagejson.txt
+            cat package.json >> packagejson.txt
+          else
+            echo "no package.json" > packagejson.txt
+          fi
+
+      - name: Upload debug files (package.json + filelist)
         uses: actions/upload-artifact@v4
         with:
           name: debug-info
           path: |
             filelist.txt
             packagejson.txt
+
