@@ -1,131 +1,51 @@
-name: Build & Package (install + artifact)
+name: Install and Commit node_modules (direct folder)
 
 on:
+  workflow_dispatch:    # run manually from the Actions tab
   push:
     branches:
       - main
-  workflow_dispatch:
 
 jobs:
-  build-and-package:
+  install-and-commit:
     runs-on: ubuntu-latest
+
+    permissions:
+      contents: write
+
     steps:
-      - name: Checkout repo
+      - name: Checkout repository (full)
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-      - name: Show runner info
-        run: |
-          echo "Runner: $RUNNER_OS"
-          node --version || true
-          npm --version || true
-          echo "---- package.json (top) ----"
-          if [ -f package.json ]; then jq 'del(.dependencies, .devDependencies) | .scripts' package.json || cat package.json | head -n 50 ; else echo "no package.json"; fi
-
-      - name: Set up Node.js
+      - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '20'
 
-      - name: Install dependencies (ci)
+      - name: Install dependencies
         run: |
-          if [ -f package-lock.json ]; then
-            npm ci
-          else
-            npm install
-          fi
+          if [ -f package-lock.json ]; then npm ci; else npm install; fi
 
-      - name: Determine & run build command (safe, uses .cjs helper)
-        id: buildstep
+      - name: Force add node_modules and commit
+        env:
+          BRANCH: main
         run: |
-          cat > choose_build.cjs <<'CJS'
-          const fs = require('fs');
-          try {
-            const p = JSON.parse(fs.readFileSync('package.json','utf8'));
-            if (p.scripts && p.scripts.build) { console.log('npm run build'); process.exit(0); }
-            const deps = Object.assign({}, p.dependencies || {}, p.devDependencies || {});
-            if (deps.vite) { console.log('npm run build || npx vite build'); process.exit(0); }
-            if (deps['react-scripts']) { console.log('npm run build'); process.exit(0); }
-            if (deps.next) { console.log('npm run build'); process.exit(0); }
-            if (deps.gatsby) { console.log('npm run build'); process.exit(0); }
-            if (deps.parcel) { console.log('npx parcel build'); process.exit(0); }
-          } catch(e) { /* ignore */ }
-          console.log('');
-          CJS
+          # configure git author
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
 
-          BUILD_CMD="$(node choose_build.cjs)"
-          echo "Selected build command: [$BUILD_CMD]"
-          echo "cmd=$BUILD_CMD" >> $GITHUB_OUTPUT
-          if [ -n "$BUILD_CMD" ]; then
-            bash -lc "$BUILD_CMD" || echo "Build command failed (nonfatal)";
-          else
-            echo "No build command detected, skipping build step."
-          fi
+          # Show .gitignore and check if node_modules is ignored
+          echo "---- .gitignore (if present) ----"
+          [ -f .gitignore ] && cat .gitignore || echo "(no .gitignore)"
 
-      - name: List top-level files and find build outputs (debug)
-        run: |
-          echo "---- ls -la (root) ----"
-          ls -la
-          echo "---- find common build dirs ----"
-          find . -maxdepth 3 -type d \( -name dist -o -name build -o -name out -o -name public -o -name '.next' -o -name '.output' \) -print || true
-          echo "---- sizes of candidate dirs ----"
-          for d in dist build out public .next .output; do if [ -d "$d" ]; then echo ">>> $d"; du -sh "$d" || true; fi; done
+          # Force-add node_modules even if listed in .gitignore
+          git add -f node_modules || true
 
-      - name: Collect build artifact paths
-        id: collect
-        run: |
-          ARTPATHS=""
-          for d in dist build out public .next .output; do
-            if [ -d "$d" ] && [ "$(ls -A $d 2>/dev/null)" ]; then
-              ARTPATHS="$ARTPATHS $d"
-            fi
-          done
-          if [ -f index.html ] && [ -z "$ARTPATHS" ]; then
-            ARTPATHS="$ARTPATHS index.html"
-          fi
-          ARTPATHS="$(echo $ARTPATHS | sed -e 's/^ //')"
-          echo "paths=$ARTPATHS" >> $GITHUB_OUTPUT
-          echo "Found artifact paths: [$ARTPATHS]"
-
-      - name: Upload build output (if any)
-        if: ${{ steps.collect.outputs.paths != '' }}
-        uses: actions/upload-artifact@v4
-        with:
-          name: build-output
-          path: ${{ steps.collect.outputs.paths }}
-
-      - name: Create node_modules.zip fallback (if no build output)
-        if: ${{ steps.collect.outputs.paths == '' }}
-        run: |
-          echo "No build output found; creating node_modules.zip as fallback (may be large)."
-          rm -f node_modules.zip
-          if [ -d node_modules ]; then
-            zip -r node_modules.zip node_modules || true
-            ls -lh node_modules.zip || true
-          else
-            echo "No node_modules present."
-          fi
-
-      - name: Upload node_modules zip (fallback)
-        if: ${{ steps.collect.outputs.paths == '' }}
-        uses: actions/upload-artifact@v4
-        with:
-          name: node_modules-zip
-          path: node_modules.zip
-
-      - name: Create debug files (package.json + filelist)
-        run: |
-          ls -la > filelist.txt
-          if [ -f package.json ]; then
-            echo "---- package.json ----" > packagejson.txt
-            cat package.json >> packagejson.txt
-          else
-            echo "no package.json" > packagejson.txt
-          fi
-
-      - name: Upload debug files (package.json + filelist)
-        uses: actions/upload-artifact@v4
-        with:
-          name: debug-info
-          path: |
-            filelist.txt
-            packagejson.txt
+          # If there are other unstaged files you don't want to include, be specific instead:
+          # git add -f node_modules/somepkg
+          
+          # Commit and push
+          git commit -m "Add node_modules from workflow" || echo "No changes to commit"
+          git push origin HEAD:$BRANCH
