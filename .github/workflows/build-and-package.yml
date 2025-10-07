@@ -1,0 +1,130 @@
+name: Build & Package (install + artifact)
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  build-and-package:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Show runner info
+        run: |
+          echo "Runner: $RUNNER_OS"
+          node --version || true
+          npm --version || true
+          echo "---- package.json (top) ----"
+          if [ -f package.json ]; then jq 'del(.dependencies, .devDependencies) | .scripts' package.json || cat package.json | head -n 50 ; else echo "no package.json"; fi
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies (ci)
+        run: |
+          if [ -f package-lock.json ]; then
+            npm ci
+          else
+            npm install
+          fi
+
+      - name: Determine & run build command (tries common options)
+        id: buildstep
+        run: |
+          # Decide which build command to run (if any)
+          BUILD_CMD=""
+          node -e "
+          const fs=require('fs');
+          let p={};
+          try { p=require('./package.json') } catch(e) {}
+          if(p.scripts && p.scripts.build) { console.log('npm run build'); process.exit(0); }
+          const deps = Object.assign({}, p.dependencies || {}, p.devDependencies || {});
+          if(deps.vite) { console.log('npm run build || npx vite build'); process.exit(0); }
+          if(deps['react-scripts']) { console.log('npm run build'); process.exit(0); }
+          if(deps.next) { console.log('npm run build'); process.exit(0); }
+          if(deps.gatsby) { console.log('npm run build'); process.exit(0); }
+          if(deps.parcel) { console.log('npx parcel build'); process.exit(0); }
+          console.log('');
+          "
+          BUILD_CMD="$(node -e \"const fs=require('fs'); try{const p=require('./package.json'); if(p.scripts && p.scripts.build){console.log('npm run build');} else { const deps = Object.assign({}, p.dependencies||{}, p.devDependencies||{}); if(deps.vite){console.log('npm run build || npx vite build')} else if(deps['react-scripts']){console.log('npm run build')} else if(deps.next){console.log('npm run build')} else if(deps.gatsby){console.log('npm run build')} else if(deps.parcel){console.log('npx parcel build')} else {console.log('')} }}catch(e){console.log('')}\")"
+          echo "Selected build command: [$BUILD_CMD]"
+          echo "::set-output name=cmd::$BUILD_CMD"
+          if [ -n "$BUILD_CMD" ]; then
+            # attempt the selected command(s); allow failure but continue
+            bash -lc "$BUILD_CMD" || echo "Build command failed (nonfatal)"; 
+          else
+            echo "No build command detected, skipping build step."
+          fi
+
+      - name: List top-level files and find build outputs (debug)
+        run: |
+          echo "---- ls -la (root) ----"
+          ls -la
+          echo "---- find common build dirs ----"
+          find . -maxdepth 3 -type d \( -name dist -o -name build -o -name out -o -name public -o -name '.next' -o -name '.output' \) -print || true
+          echo "---- sizes of candidate dirs ----"
+          for d in dist build out public .next .output; do if [ -d "$d" ]; then echo ">>> $d"; du -sh "$d" || true; fi; done
+
+      - name: Collect build artifact paths
+        id: collect
+        run: |
+          # create a list of existing candidate directories with content
+          ARTPATHS=""
+          for d in dist build out public .next .output; do
+            if [ -d "$d" ] && [ "$(ls -A $d 2>/dev/null)" ]; then
+              ARTPATHS="$ARTPATHS $d"
+            fi
+          done
+          # also check top-level files sometimes used
+          if [ -f index.html ] && [ ! -d dist ]; then
+            ARTPATHS="$ARTPATHS index.html"
+          fi
+          echo "paths:$ARTPATHS" > artifact_paths.txt
+          echo "::set-output name=paths::$ARTPATHS"
+          cat artifact_paths.txt
+
+      - name: Upload build output (if any)
+        if: steps.collect.outputs.paths != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-output
+          path: ${{ steps.collect.outputs.paths }}
+
+      - name: Upload node_modules.zip fallback (if no build output)
+        if: steps.collect.outputs.paths == ''
+        run: |
+          echo "No build output found; creating node_modules.zip as fallback (may be large)."
+          rm -f node_modules.zip
+          if [ -d node_modules ]; then
+            # create zip, avoid symlinks issues and huge subtrees if desired
+            zip -r node_modules.zip node_modules || true
+            ls -lh node_modules.zip || true
+          else
+            echo "No node_modules present."
+          fi
+        # upload fallback zip (only if present)
+      - name: Upload node_modules zip (fallback)
+        if: steps.collect.outputs.paths == '' && always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: node_modules-zip
+          path: node_modules.zip
+
+      - name: Upload debug files (package.json + filelist)
+        run: |
+          echo "Uploading debug files..."
+          ls -la > filelist.txt
+          echo "---- package.json ----" > packagejson.txt
+          if [ -f package.json ]; then cat package.json >> packagejson.txt; else echo "no package.json" >> packagejson.txt; fi
+        uses: actions/upload-artifact@v4
+        with:
+          name: debug-info
+          path: |
+            filelist.txt
+            packagejson.txt
