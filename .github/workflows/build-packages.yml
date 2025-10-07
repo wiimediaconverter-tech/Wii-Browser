@@ -1,4 +1,4 @@
-name: Build NPM Packages
+name: Build and Upload Project
 
 on:
   push:
@@ -9,9 +9,8 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-
     permissions:
-      contents: write  # gives the workflow push rights
+      contents: read
 
     steps:
       - name: Checkout repository
@@ -25,18 +24,20 @@ jobs:
       - name: Install dependencies
         run: npm install
 
-      - name: Build project (optional)
+      - name: Build project (if available)
         run: |
           if [ -f package.json ] && grep -q "\"build\"" package.json; then
             npm run build
           else
-            echo "No build script found, skipping."
+            echo "No build script found, skipping build."
           fi
 
-      - name: Cache dependencies
-        uses: actions/cache@v4
+      - name: Upload build output
+        uses: actions/upload-artifact@v4
         with:
-          path: ~/.npm
-          key: ${{ runner.os }}-node-${{ hashFiles('**/package-lock.json') }}
-          restore-keys: |
-            ${{ runner.os }}-node-
+          name: build-output
+          path: |
+            dist
+            build
+            out
+            public
