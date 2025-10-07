@@ -34,13 +34,29 @@ jobs:
             npm install
           fi
 
-      - name: Determine & run build command (tries common options)
+      - name: Determine & run build command (safe)
         id: buildstep
         run: |
-          BUILD_CMD="$(node -e \"const fs=require('fs'); try{const p=require('./package.json'); if(p.scripts && p.scripts.build){console.log('npm run build');} else { const deps = Object.assign({}, p.dependencies||{}, p.devDependencies||{}); if(deps.vite){console.log('npm run build || npx vite build')} else if(deps['react-scripts']){console.log('npm run build')} else if(deps.next){console.log('npm run build')} else if(deps.gatsby){console.log('npm run build')} else if(deps.parcel){console.log('npx parcel build')} else {console.log('')} }}catch(e){console.log('')}\")"
+          cat > choose_build.js <<'JS'
+          const fs = require('fs');
+          try {
+            const p = JSON.parse(fs.readFileSync('package.json','utf8'));
+            if (p.scripts && p.scripts.build) { console.log('npm run build'); process.exit(0); }
+            const deps = Object.assign({}, p.dependencies || {}, p.devDependencies || {});
+            if (deps.vite) { console.log('npm run build || npx vite build'); process.exit(0); }
+            if (deps['react-scripts']) { console.log('npm run build'); process.exit(0); }
+            if (deps.next) { console.log('npm run build'); process.exit(0); }
+            if (deps.gatsby) { console.log('npm run build'); process.exit(0); }
+            if (deps.parcel) { console.log('npx parcel build'); process.exit(0); }
+          } catch(e) { /* ignore */ }
+          console.log('');
+          JS
+
+          BUILD_CMD="$(node choose_build.js)"
           echo "Selected build command: [$BUILD_CMD]"
           echo "cmd=$BUILD_CMD" >> $GITHUB_OUTPUT
           if [ -n "$BUILD_CMD" ]; then
+            # run the command(s); allow failure but continue the workflow
             bash -lc "$BUILD_CMD" || echo "Build command failed (nonfatal)";
           else
             echo "No build command detected, skipping build step."
@@ -67,11 +83,10 @@ jobs:
           if [ -f index.html ] && [ -z "$ARTPATHS" ]; then
             ARTPATHS="$ARTPATHS index.html"
           fi
-          # Trim leading space
           ARTPATHS="$(echo $ARTPATHS | sed -e 's/^ //')"
           echo "paths=$ARTPATHS" >> $GITHUB_OUTPUT
           echo "Found artifact paths: [$ARTPATHS]"
-      
+
       - name: Upload build output (if any)
         if: ${{ steps.collect.outputs.paths != '' }}
         uses: actions/upload-artifact@v4
@@ -115,4 +130,3 @@ jobs:
           path: |
             filelist.txt
             packagejson.txt
-
