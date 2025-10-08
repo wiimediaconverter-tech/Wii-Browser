@@ -16,7 +16,7 @@
     "express": "^5.1.0",
     "formidable": "^3.5.4",
     "puppeteer": "^24.23.0"
-  }
+  },
   "scripts": {
   "build": "sh -c \"vite build || react-scripts build || next build || parcel build || echo 'no-build'\"",
   "start": "sh -c \"(next start -p $PORT) || (npx serve -s dist -l $PORT) || (npx serve -s build -l $PORT) || node server.js || echo 'no-start'\"",
