@@ -1,21 +1,19 @@
 {
-  "name": "wiibrowser-1.0",
+  "name": "wii-browser-render",
   "version": "1.0.0",
-  "description": "",
-  "main": "server-local.js",
+  "description": "Screenshot-based web browser for Wii - Render deployment",
+  "main": "server.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
-    "start": "node server-local.js"
+    "start": "node server.js",
+    "postinstall": "npx puppeteer install --product=chrome"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
-  "type": "module",
+  "engines": {
+    "node": ">=18"
+  },
   "dependencies": {
-    "body-parser": "^2.2.0",
-    "express": "^5.1.0",
-    "formidable": "^3.5.4",
-    "puppeteer": "^24.23.0"
+    "express": "^4.18.2",
+    "puppeteer": "^24.3.0",
+    "morgan": "^1.10.0"
   },
   "scripts": {
   "build": "sh -c \"vite build || react-scripts build || next build || parcel build || echo 'no-build'\"",
